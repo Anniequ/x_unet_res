@@ -13,29 +13,45 @@ from torch import nn, optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
-from datapre import VOCSegDataset, classes
-from unet import Unet, label_accuracy_score
+from datapre import VOCSegDataset, classes,get_training_augmentation
+from resunet import resnet34
+from unet import Unet, unet, label_accuracy_score
+
 
 def res_record(content):
-    with open('./results/result.txt', 'a') as f:
+    with open('./results/results.txt', 'a') as f:
         f.write(content)
+
+# helper function for data visualization
+def visualize(**images):
+    """PLot images in one row."""
+    n = len(images)
+    plt.figure(figsize=(16, 5))
+    for i, (name, image) in enumerate(images.items()):
+        plt.subplot(1, n, i + 1)
+        plt.xticks([])
+        plt.yticks([])
+        plt.title(' '.join(name.split('_')).title())
+        plt.imshow(image)
+    plt.show()
 
 
 def train(epoches=20, show_vgg_params=False):
-    #device = torch.device('cpu')
+    # device = torch.device('cpu')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     batch_size = 4
     height = 224
     width = 224
-    voc_train = VOCSegDataset(True, height, width)
-    voc_test = VOCSegDataset(False, height, width)
+    voc_train = VOCSegDataset(True,)
+    voc_test = VOCSegDataset(False)
 
     train_data = DataLoader(voc_train, batch_size=batch_size, shuffle=True)
-    valid_data = DataLoader(voc_test, batch_size=batch_size)
+    valid_data = DataLoader(voc_test, batch_size=batch_size, shuffle=True)
     # 分类的总数
     num_classes = len(classes)
-    net = Unet(3, 5).to(device)
-
+    # net = unet(3, 5).to(device)
+    net = resnet34(3, 5, True).to(device)
+    # net.load_state_dict(torch.load('./model/fcn-resnet34.pth'))
     criterion = nn.NLLLoss().to(device)
     optimizer = optim.SGD(net.parameters(), lr=1e-2, weight_decay=1e-4)
 
@@ -55,6 +71,7 @@ def train(epoches=20, show_vgg_params=False):
 
     print("Start training at ", strftime("%Y-%m-%d %H:%M:%S", localtime()))
     res_record("Time:" + strftime("%Y-%m-%d %H:%M:%S", localtime()) + "\n")
+
 
     for epoch in range(epoches):
         _train_loss = 0
@@ -102,7 +119,6 @@ def train(epoches=20, show_vgg_params=False):
         train_mean_iu.append(_train_mean_iu / len(voc_train))
         train_fwavacc.append(_train_fwavacc)
 
-
         net = net.eval()
 
         _eval_loss = 0
@@ -133,18 +149,19 @@ def train(epoches=20, show_vgg_params=False):
         eval_acc_cls.append(_eval_acc_cls)
         eval_mean_iu.append(_eval_mean_iu / len(voc_test))
         eval_fwavacc.append(_eval_fwavacc)
-        if epoch % 5 == 0:
+        k = _eval_mean_iu / len(voc_test)
+        if k > 0.72 or epoch % 5 == 0:
             # 保存模型
-            PATH = "./model/weights{}.pth".format(epoch)
+            PATH = "./model/weights-{}.pth".format(epoch)
             torch.save(net.state_dict(), PATH)
         # print the results of the current training
         cur_time = datetime.now()
         h, remainder = divmod((cur_time - prev_time).seconds, 3600)
         m, s = divmod(remainder, 60)
         epoch_str = (
-        'Epoch: {}, Train Loss: {:.5f}, Train Acc: {:.5f}, Train Mean IU: {:.5f}, Valid Loss: {:.5f}, Valid Acc: {:.5f}, Valid Mean IU: {:.5f} '.format(
-            epoch, _train_loss / len(train_data), _train_acc / len(voc_train), _train_mean_iu / len(voc_train),
-               _eval_loss / len(valid_data), _eval_acc / len(voc_test), _eval_mean_iu / len(voc_test)))
+            'Epoch: {}, Train Loss: {:.5f}, Train Acc: {:.5f}, Train Mean IU: {:.5f}, Valid Loss: {:.5f}, Valid Acc: {:.5f}, Valid Mean IU: {:.5f} '.format(
+                epoch, _train_loss / len(train_data), _train_acc / len(voc_train), _train_mean_iu / len(voc_train),
+                       _eval_loss / len(valid_data), _eval_acc / len(voc_test), _eval_mean_iu / len(voc_test)))
         time_str = 'Time:{:.0f}:{:.0f}:{:.0f}'.format(h, m, s)
         print(epoch_str + time_str)
         res_record(epoch_str + '\n')
@@ -185,9 +202,9 @@ def train(epoches=20, show_vgg_params=False):
 
     # 测试模型性能
     # 保存模型
-    PATH = "./model/change_fcn-resnet34.pth"
+    PATH = "./model/resnet_unet_aug.pth"
     torch.save(net.state_dict(), PATH)
 
 
 if __name__ == '__main__':
-    train(30)
+    train(50)

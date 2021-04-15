@@ -12,8 +12,10 @@ import torch
 import torchvision.transforms as tfs
 from torch.utils.data import DataLoader
 import torchvision.models as models
+import albumentations as albu
+import cv2 as cv
 
-voc_root = r'D:\project\python\FCNcopy\data\MYVOC'
+voc_root = r'D:\project\data_qjp\406\MYVOC224224aug'
 np.seterr(divide='ignore', invalid='ignore')
 
 
@@ -42,7 +44,7 @@ def crop(data, label, height, width):
 classes = ['background', 'tape', 'scissors', 'nailpolish', 'lighter']
 
 # 各种标签所对应的颜色
-colormap = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0], [0, 0, 128]]
+colormap = [[0, 0, 0], [0, 0, 128], [0, 128, 0], [0, 128, 128], [128, 0, 0]]
 cm2lbl = np.zeros(256 ** 3)
 
 # 枚举的时候i是下标，cm是一个三元组，分别标记了RGB值
@@ -76,10 +78,11 @@ def image_transforms(data, label):
 class VOCSegDataset(torch.utils.data.Dataset):
 
     # 构造函数
-    def __init__(self, train, height, width, transforms=image_transforms):
+    def __init__(self, train, height=224, width=224, augmentation=None,transforms=image_transforms):
         self.height = height
         self.width = width
         self.fnum = 0  # 用来记录被过滤的图片数
+        self.augmentation = augmentation
         self.transforms = transforms
         data_list, label_list = read_img(train=train)
         self.data_list = self._filter(data_list)
@@ -104,10 +107,85 @@ class VOCSegDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         img = self.data_list[idx]
         label = self.label_list[idx]
-        img = Image.open(img)
-        label = Image.open(label).convert('RGB')
+        img = cv.imread(img)
+        img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+        label = cv.imread(label)
+        label = cv.cvtColor(label, cv.COLOR_BGR2RGB)
+
+        if self.augmentation:
+            sample = self.augmentation(image=img, mask=label)
+            img, label = sample['image'], sample['mask']
         img, label = self.transforms(img, label)
-        return img, label
+        return img,label
 
     def __len__(self):
         return len(self.data_list)
+
+
+def get_training_augmentation():
+    train_transform = [
+
+        albu.HorizontalFlip(p=0.5), #水平翻转
+
+        albu.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0), # 平移缩放旋转
+
+        albu.PadIfNeeded(min_height=224, min_width=224, always_apply=True, border_mode=0),  # 加padding
+        albu.RandomCrop(height=224, width=224, always_apply=True), # 随机剪裁
+
+        albu.IAAAdditiveGaussianNoise(p=0.2),  # Add gaussian noise to the input image.
+        albu.IAAPerspective(p=0.5),  # Perform a random four point perspective transform of the input
+
+        albu.OneOf(
+            [
+                albu.CLAHE(p=1), # 对比度受限情况下的自适应直方图均衡化算法
+                albu.RandomBrightnessContrast(p=1), # Randomly change brightness and contrast
+                albu.RandomGamma(p=1), # Gamma变换
+            ],
+            p=0.9,
+        ),
+
+        albu.OneOf(
+            [
+                albu.IAASharpen(p=1), # Sharpen the input image and overlays the result with the original image.
+                albu.Blur(blur_limit=3, p=1),
+                albu.MotionBlur(blur_limit=3, p=1),
+            ],
+            p=0.9,
+        ),
+
+        albu.OneOf(
+            [
+                albu.RandomBrightnessContrast(p=1),
+                albu.HueSaturationValue(p=1),  # Randomly change hue, saturation and value of the input image.
+            ],
+            p=0.9,
+        ),
+    ]
+    return albu.Compose(train_transform)
+
+
+# helper function for data visualization
+def visualize(**images):
+    """PLot images in one row."""
+    n = len(images)
+    plt.figure(figsize=(16, 5))
+    for i, (name, image) in enumerate(images.items()):
+        plt.subplot(1, n, i + 1)
+        plt.xticks([])
+        plt.yticks([])
+        plt.title(' '.join(name.split('_')).title())
+        plt.imshow(image)
+    plt.show()
+
+
+
+
+
+if __name__ == '__main__':
+    voc_train = VOCSegDataset(True, augmentation=get_training_augmentation())
+    voc_test = VOCSegDataset(False)
+
+    for i in range(3):
+        image, mask = voc_train[1]
+        # print(image.shape)
+        visualize(image=image, mask=mask)
