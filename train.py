@@ -13,9 +13,9 @@ from torch import nn, optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
-from datapre import VOCSegDataset, classes,get_training_augmentation
+from datapre import VOCSegDataset, classes
 from resunet import resnet34
-from unet import Unet, unet, label_accuracy_score
+from assist_func import label_accuracy_score
 
 
 def res_record(content):
